@@ -16,24 +16,22 @@ def scrape(request: ScrapeRequest):
             page = browser.new_page()
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
-            time.sleep(2)  # Wait a bit more for price to render
+            time.sleep(2)
 
-            # Scroll to trigger lazy loading
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
 
-            # Title
             title = page.title()
 
-            # Price selectors (expanded list)
+            # Price scraping
             price_selectors = [
-                "#prcIsum",                # Standard
-                "#mm-saleDscPrc",          # Discounted
-                ".x-price-approx__price",  # Alternative layout
+                "#prcIsum",
+                "#mm-saleDscPrc",
+                ".x-price-approx__price",
                 ".x-price-approx__value",
-                ".display-price",          # Auction layouts
-                ".x-bin-price",            # Buy It Now boxed style
-                "[itemprop='price']"       # Semantic HTML
+                ".display-price",
+                ".x-bin-price",
+                "[itemprop='price']"
             ]
 
             price = "Unknown Price"
@@ -49,14 +47,27 @@ def scrape(request: ScrapeRequest):
             if img:
                 image = img.get_attribute("src")
 
+            # Item specifics table
+            specifics = {}
+            labels = [
+                "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
+                "Model", "Engine Size", "Mileage", "Fuel Type"
+            ]
+            rows = page.query_selector_all(".itemAttr td")
+
+            for i in range(len(rows)):
+                key = rows[i].inner_text().strip().rstrip(":")
+                if key in labels and i + 1 < len(rows):
+                    value = rows[i + 1].inner_text().strip()
+                    specifics[key.lower().replace(" ", "_")] = value
+
             browser.close()
 
             return {
                 "title": title,
                 "price": price,
                 "image": image,
-                "mileage": None,
-                "location": None
+                **specifics
             }
 
     except Exception as e:
