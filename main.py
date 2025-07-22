@@ -22,20 +22,11 @@ def scrape(request: ScrapeRequest):
                 }
             )
 
-            # Load the page and wait for it to fully render
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
-
-            # Scroll to bottom
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
-
-            # Scroll "Item specifics" into view if found
-            item_specifics_el = page.query_selector("span:has-text('Item specifics')")
-            if item_specifics_el:
-                item_specifics_el.scroll_into_view_if_needed()
-                time.sleep(1)  # Allow dynamic content to render
 
             title = page.title()
 
@@ -51,28 +42,24 @@ def scrape(request: ScrapeRequest):
                     price = el.inner_text()
                     break
 
-            # Image scraping
+            # Image
             image = None
             img = page.query_selector("#icImg") or page.query_selector("img[src*='ebayimg']")
             if img:
                 image = img.get_attribute("src")
 
-            # Specifics scraping
+            # Item specifics scraping from eBay's modern layout
             specifics = {}
             fields_we_want = [
                 "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
                 "Model", "Engine Size", "Mileage", "Fuel Type"
             ]
 
-            # Wait for specifics section
-            page.wait_for_selector(".ux-layout-section__item.ux-labels-values__item", timeout=10000)
-            spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
-
-
-            spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
-            for item in spec_items:
-                label_el = item.query_selector(".ux-labels-values__labels")
-                value_el = item.query_selector(".ux-labels-values__values")
+            page.wait_for_selector(".ux-layout-section-evo__row", timeout=15000)
+            rows = page.query_selector_all(".ux-layout-section-evo__row")
+            for row in rows:
+                label_el = row.query_selector(".ux-labels-values__labels .ux-textspans")
+                value_el = row.query_selector(".ux-labels-values__values .ux-textspans")
                 if label_el and value_el:
                     label = label_el.inner_text().strip().replace(":", "")
                     value = value_el.inner_text().strip()
@@ -90,5 +77,6 @@ def scrape(request: ScrapeRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
