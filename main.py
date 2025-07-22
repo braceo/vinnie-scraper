@@ -24,7 +24,6 @@ def scrape(request: ScrapeRequest):
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
-
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
 
@@ -40,7 +39,6 @@ def scrape(request: ScrapeRequest):
                 ".x-bin-price",
                 "[itemprop='price']"
             ]
-
             price = "Unknown Price"
             for selector in price_selectors:
                 el = page.query_selector(selector)
@@ -54,19 +52,21 @@ def scrape(request: ScrapeRequest):
             if img:
                 image = img.get_attribute("src")
 
-            # Item specifics table
+            # Item specifics section (fallback to all table labels)
             specifics = {}
-            labels = [
+            labels_to_extract = [
                 "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
                 "Model", "Engine Size", "Mileage", "Fuel Type"
             ]
-            rows = page.query_selector_all(".itemAttr td")
 
-            for i in range(len(rows)):
-                key = rows[i].inner_text().strip().rstrip(":")
-                if key in labels and i + 1 < len(rows):
-                    value = rows[i + 1].inner_text().strip()
-                    specifics[key.lower().replace(" ", "_")] = value
+            item_attr_section = page.query_selector(".itemAttr")
+            if item_attr_section:
+                cells = item_attr_section.query_selector_all("td")
+                for i in range(0, len(cells)-1, 2):
+                    label = cells[i].inner_text().strip().replace(":", "")
+                    value = cells[i+1].inner_text().strip()
+                    if label in labels_to_extract:
+                        specifics[label.lower().replace(" ", "_")] = value
 
             browser.close()
 
@@ -79,4 +79,5 @@ def scrape(request: ScrapeRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
