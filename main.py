@@ -21,11 +21,21 @@ def scrape(request: ScrapeRequest):
                     "Upgrade-Insecure-Requests": "1"
                 }
             )
+
+            # Load the page and wait for it to fully render
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
+
+            # Scroll to bottom
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
+
+            # Scroll "Item specifics" into view if found
+            item_specifics_el = page.query_selector("span:has-text('Item specifics')")
+            if item_specifics_el:
+                item_specifics_el.scroll_into_view_if_needed()
+                time.sleep(1)  # Allow dynamic content to render
 
             title = page.title()
 
@@ -41,18 +51,21 @@ def scrape(request: ScrapeRequest):
                     price = el.inner_text()
                     break
 
-            # Image
+            # Image scraping
             image = None
             img = page.query_selector("#icImg") or page.query_selector("img[src*='ebayimg']")
             if img:
                 image = img.get_attribute("src")
 
-            # NEW: Scrape item specifics from modern layout
+            # Specifics scraping
             specifics = {}
             fields_we_want = [
                 "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
                 "Model", "Engine Size", "Mileage", "Fuel Type"
             ]
+
+            # Wait for specifics section
+            page.wait_for_selector(".ux-layout-section__item.ux-labels-values__item", timeout=10000)
 
             spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
             for item in spec_items:
