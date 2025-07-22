@@ -31,13 +31,8 @@ def scrape(request: ScrapeRequest):
 
             # Price scraping
             price_selectors = [
-                "#prcIsum",
-                "#mm-saleDscPrc",
-                ".x-price-approx__price",
-                ".x-price-approx__value",
-                ".display-price",
-                ".x-bin-price",
-                "[itemprop='price']"
+                "#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price", ".x-price-approx__value",
+                ".display-price", ".x-bin-price", "[itemprop='price']"
             ]
             price = "Unknown Price"
             for selector in price_selectors:
@@ -52,20 +47,21 @@ def scrape(request: ScrapeRequest):
             if img:
                 image = img.get_attribute("src")
 
-            # Item specifics section (fallback to all table labels)
+            # NEW: Scrape item specifics from modern layout
             specifics = {}
-            labels_to_extract = [
+            fields_we_want = [
                 "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
                 "Model", "Engine Size", "Mileage", "Fuel Type"
             ]
 
-            item_attr_section = page.query_selector(".itemAttr")
-            if item_attr_section:
-                cells = item_attr_section.query_selector_all("td")
-                for i in range(0, len(cells)-1, 2):
-                    label = cells[i].inner_text().strip().replace(":", "")
-                    value = cells[i+1].inner_text().strip()
-                    if label in labels_to_extract:
+            spec_items = page.query_selector_all(".ux-labels-values__item")
+            for item in spec_items:
+                label_el = item.query_selector(".ux-labels-values__labels")
+                value_el = item.query_selector(".ux-labels-values__values")
+                if label_el and value_el:
+                    label = label_el.inner_text().strip().replace(":", "")
+                    value = value_el.inner_text().strip()
+                    if label in fields_we_want:
                         specifics[label.lower().replace(" ", "_")] = value
 
             browser.close()
