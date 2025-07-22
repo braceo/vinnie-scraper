@@ -54,7 +54,7 @@ def scrape(request: ScrapeRequest):
                 "Model", "Engine Size", "Mileage", "Fuel Type"
             ]
 
-            spec_items = page.query_selector_all(".ux-labels-values__item")
+            spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
             for item in spec_items:
                 label_el = item.query_selector(".ux-labels-values__labels")
                 value_el = item.query_selector(".ux-labels-values__values")
