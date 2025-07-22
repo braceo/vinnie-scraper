@@ -66,6 +66,8 @@ def scrape(request: ScrapeRequest):
 
             # Wait for specifics section
             page.wait_for_selector(".ux-layout-section__item.ux-labels-values__item", timeout=10000)
+            spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
+
 
             spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
             for item in spec_items:
