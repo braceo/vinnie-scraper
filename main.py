@@ -13,7 +13,14 @@ def scrape(request: ScrapeRequest):
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "DNT": "1",
+                    "Upgrade-Insecure-Requests": "1"
+                }
+            )
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
@@ -72,3 +79,4 @@ def scrape(request: ScrapeRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
