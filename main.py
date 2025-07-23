@@ -22,30 +22,28 @@ def scrape(request: ScrapeRequest):
                     "Upgrade-Insecure-Requests": "1"
                 }
             )
+
+            # Load page
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
 
+            # Basic fields
             title = page.title().strip()
 
-            # Price scraping
-            price_selectors = [
-                "#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price", ".x-price-approx__value",
-                ".display-price", ".x-bin-price", "[itemprop='price']"
-            ]
+            # Price
             price_raw = "Unknown"
-            for selector in price_selectors:
-                el = page.query_selector(selector)
+            for sel in ["#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price",
+                        ".x-price-approx__value", ".display-price", ".x-bin-price",
+                        "[itemprop='price']"]:
+                el = page.query_selector(sel)
                 if el:
                     price_raw = el.inner_text().strip()
                     break
-
-            # Normalize price to just number
-            price = "Unknown"
-            match = re.search(r"£\s?([\d,]+(?:\.\d{2})?)", price_raw)
-            if match:
-                price = f"£{match.group(1)}"
+            m = re.search(r"£\s?([\d,]+(?:\.\d{2})?)", price_raw)
+            price = f"£{m.group(1)}" if m else "Unknown"
 
             # Image
             image = None
@@ -53,55 +51,91 @@ def scrape(request: ScrapeRequest):
             if img:
                 image = img.get_attribute("src")
 
-            # Initialize specifics with fallback values
+            # Initialize all specifics with fallback
             specifics = {
-                "mileage": "Unknown",
-                "exterior_colour": "Unknown",
-                "interior_colour": "Unknown",
+                "year": "Unknown",
                 "manufacturer": "Unknown",
                 "model": "Unknown",
-                "fuel_type": "Unknown",
                 "engine_size": "Unknown",
-                "year": "Unknown",
+                "fuel_type": "Unknown",
                 "body_type": "Unknown",
-                "transmission": "Unknown"
+                "transmission": "Unknown",
+                "mileage": "Unknown",
+                "exterior_colour": "Unknown",
+                "interior_colour": "Unknown"
             }
 
-            # Scrape item specifics
-            rows = page.query_selector_all("div.ux-layout-section-evo__row")
+            # 1) Modern evo rows (divs)
+            for row in page.query_selector_all("div.ux-layout-section-evo__row"):
+                lab = row.query_selector("div.ux-labels-values__labels span.ux-textspans")
+                val = row.query_selector("div.ux-labels-values__values span.ux-textspans")
+                if not lab or not val:
+                    continue
+                label = lab.inner_text().strip().rstrip(":").lower()
+                value = val.inner_text().strip()
+                key_map = {
+                    "year": "year",
+                    "manufacturer": "manufacturer",
+                    "model": "model",
+                    "engine size": "engine_size",
+                    "fuel type": "fuel_type",
+                    "body type": "body_type",
+                    "transmission": "transmission",
+                    "mileage": "mileage",
+                    "exterior colour": "exterior_colour",
+                    "interior colour": "interior_colour"
+                }
+                if label in key_map:
+                    specifics[key_map[label]] = value
 
-            for row in rows:
-                label_el = row.query_selector(".ux-labels-values__labels")
-                value_el = row.query_selector(".ux-labels-values__values")
+            # 2) <dl> lists fallback
+            for dl in page.query_selector_all("dl.ux-labels-values"):
+                lab = dl.query_selector("dt.ux-labels-values__labels span.ux-textspans")
+                val = dl.query_selector("dd.ux-labels-values__values span.ux-textspans")
+                if not lab or not val:
+                    continue
+                label = lab.inner_text().strip().rstrip(":").lower()
+                value = val.inner_text().strip()
+                key_map = {
+                    "year": "year",
+                    "manufacturer": "manufacturer",
+                    "model": "model",
+                    "engine size": "engine_size",
+                    "fuel type": "fuel_type",
+                    "body type": "body_type",
+                    "transmission": "transmission",
+                    "mileage": "mileage",
+                    "exterior colour": "exterior_colour",
+                    "interior colour": "interior_colour"
+                }
+                if label in key_map and specifics[key_map[label]] == "Unknown":
+                    specifics[key_map[label]] = value
 
-                if label_el and value_el:
-                    label = label_el.inner_text().strip().replace(":", "").lower()
-                    value = value_el.inner_text().strip()
+            # 3) <ul><li> legacy fallback
+            for li in page.query_selector_all("ul.ux-labels-values__content li"):
+                text = li.inner_text().strip().split(":", 1)
+                if len(text) != 2:
+                    continue
+                label, value = text[0].lower(), text[1].strip()
+                key_map = {
+                    "year": "year",
+                    "manufacturer": "manufacturer",
+                    "model": "model",
+                    "engine size": "engine_size",
+                    "fuel type": "fuel_type",
+                    "body type": "body_type",
+                    "transmission": "transmission",
+                    "mileage": "mileage",
+                    "exterior colour": "exterior_colour",
+                    "interior colour": "interior_colour"
+                }
+                if label in key_map and specifics[key_map[label]] == "Unknown":
+                    specifics[key_map[label]] = value
 
-                    key_map = {
-                        "mileage": "mileage",
-                        "exterior colour": "exterior_colour",
-                        "interior colour": "interior_colour",
-                        "manufacturer": "manufacturer",
-                        "model": "model",
-                        "fuel type": "fuel_type",
-                        "engine size": "engine_size",
-                        "year": "year",
-                        "body type": "body_type",
-                        "transmission": "transmission"
-                    }
-
-                    if label in key_map:
-                        clean_value = re.sub(r"\s+", " ", value)
-                        specifics[key_map[label]] = clean_value
-
-            # Clean mileage
+            # Normalize mileage digits
             if specifics["mileage"] != "Unknown":
-                mileage_digits = re.search(r"([\d,]+)", specifics["mileage"])
-                if mileage_digits:
-                    specifics["mileage"] = mileage_digits.group(1).replace(",", "")
-                else:
-                    specifics["mileage"] = "Unknown"
+                m2 = re.search(r"([\d,]+)", specifics["mileage"])
+                specifics["mileage"] = m2.group(1).replace(",", "") if m2 else "Unknown"
 
             browser.close()
 
