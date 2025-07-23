@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
 import time
+import re
 
 app = FastAPI()
 
@@ -21,26 +22,30 @@ def scrape(request: ScrapeRequest):
                     "Upgrade-Insecure-Requests": "1"
                 }
             )
-
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
-            time.sleep(2)
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1)
+            time.sleep(2)
 
-            title = page.title()
+            title = page.title().strip()
 
             # Price scraping
             price_selectors = [
                 "#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price", ".x-price-approx__value",
                 ".display-price", ".x-bin-price", "[itemprop='price']"
             ]
-            price = "Unknown Price"
+            price_raw = "Unknown"
             for selector in price_selectors:
                 el = page.query_selector(selector)
                 if el:
-                    price = el.inner_text()
+                    price_raw = el.inner_text().strip()
                     break
+
+            # Normalize price to just number
+            price = "Unknown"
+            match = re.search(r"£\s?([\d,]+(?:\.\d{2})?)", price_raw)
+            if match:
+                price = f"£{match.group(1)}"
 
             # Image
             image = None
@@ -48,23 +53,55 @@ def scrape(request: ScrapeRequest):
             if img:
                 image = img.get_attribute("src")
 
-            # Item specifics scraping from eBay's modern layout
-            specifics = {}
-            fields_we_want = [
-                "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
-                "Model", "Engine Size", "Mileage", "Fuel Type"
-            ]
+            # Initialize specifics with fallback values
+            specifics = {
+                "mileage": "Unknown",
+                "exterior_colour": "Unknown",
+                "interior_colour": "Unknown",
+                "manufacturer": "Unknown",
+                "model": "Unknown",
+                "fuel_type": "Unknown",
+                "engine_size": "Unknown",
+                "year": "Unknown",
+                "body_type": "Unknown",
+                "transmission": "Unknown"
+            }
 
-            page.wait_for_selector(".ux-layout-section-evo__row", timeout=15000)
-            rows = page.query_selector_all(".ux-layout-section-evo__row")
+            # Scrape item specifics
+            rows = page.query_selector_all("div.ux-layout-section-evo__row")
+
             for row in rows:
-                label_el = row.query_selector(".ux-labels-values__labels .ux-textspans")
-                value_el = row.query_selector(".ux-labels-values__values .ux-textspans")
+                label_el = row.query_selector(".ux-labels-values__labels")
+                value_el = row.query_selector(".ux-labels-values__values")
+
                 if label_el and value_el:
-                    label = label_el.inner_text().strip().replace(":", "")
+                    label = label_el.inner_text().strip().replace(":", "").lower()
                     value = value_el.inner_text().strip()
-                    if label in fields_we_want:
-                        specifics[label.lower().replace(" ", "_")] = value
+
+                    key_map = {
+                        "mileage": "mileage",
+                        "exterior colour": "exterior_colour",
+                        "interior colour": "interior_colour",
+                        "manufacturer": "manufacturer",
+                        "model": "model",
+                        "fuel type": "fuel_type",
+                        "engine size": "engine_size",
+                        "year": "year",
+                        "body type": "body_type",
+                        "transmission": "transmission"
+                    }
+
+                    if label in key_map:
+                        clean_value = re.sub(r"\s+", " ", value)
+                        specifics[key_map[label]] = clean_value
+
+            # Clean mileage
+            if specifics["mileage"] != "Unknown":
+                mileage_digits = re.search(r"([\d,]+)", specifics["mileage"])
+                if mileage_digits:
+                    specifics["mileage"] = mileage_digits.group(1).replace(",", "")
+                else:
+                    specifics["mileage"] = "Unknown"
 
             browser.close()
 
