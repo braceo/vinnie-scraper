@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
 import time
-import re
 
 app = FastAPI()
 
@@ -22,120 +21,69 @@ def scrape(request: ScrapeRequest):
                     "Upgrade-Insecure-Requests": "1"
                 }
             )
-
-            # Load page
             page.goto(request.url, timeout=60000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1)
+            time.sleep(2)
 
-            # Basic fields
-            title = page.title().strip()
+            # Try grabbing the listing title
+            title_el = page.query_selector("h1 span[itemprop='name']")
+            if title_el:
+                title = title_el.inner_text().strip()
+            else:
+                title = page.title().strip() or "Unknown"
 
-            # Price
-            price_raw = "Unknown"
-            for sel in ["#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price",
-                        ".x-price-approx__value", ".display-price", ".x-bin-price",
-                        "[itemprop='price']"]:
-                el = page.query_selector(sel)
+            # Price scraping
+            price_selectors = [
+                "#prcIsum", "#mm-saleDscPrc", ".x-price-approx__price", ".x-price-approx__value",
+                ".display-price", ".x-bin-price", "[itemprop='price']"
+            ]
+            price = "Unknown"
+            for selector in price_selectors:
+                el = page.query_selector(selector)
                 if el:
-                    price_raw = el.inner_text().strip()
+                    price = el.inner_text().strip()
                     break
-            m = re.search(r"£\s?([\d,]+(?:\.\d{2})?)", price_raw)
-            price = f"£{m.group(1)}" if m else "Unknown"
 
-            # Image
+            # Image scraping
             image = None
             img = page.query_selector("#icImg") or page.query_selector("img[src*='ebayimg']")
             if img:
                 image = img.get_attribute("src")
 
-            # Initialize all specifics with fallback
-            specifics = {
-                "year": "Unknown",
-                "manufacturer": "Unknown",
-                "model": "Unknown",
-                "engine_size": "Unknown",
-                "fuel_type": "Unknown",
-                "body_type": "Unknown",
-                "transmission": "Unknown",
-                "mileage": "Unknown",
-                "exterior_colour": "Unknown",
-                "interior_colour": "Unknown"
-            }
+            # Scrape item specifics
+            specifics = {}
+            fields_we_want = [
+                "Year", "Exterior Colour", "Interior Colour", "Manufacturer",
+                "Model", "Engine Size", "Mileage", "Fuel Type", "Body Type", "Transmission"
+            ]
+            fallback_fields = {key.lower().replace(" ", "_"): "Unknown" for key in fields_we_want}
 
-            # 1) Modern evo rows (divs)
-            for row in page.query_selector_all("div.ux-layout-section-evo__row"):
-                lab = row.query_selector("div.ux-labels-values__labels span.ux-textspans")
-                val = row.query_selector("div.ux-labels-values__values span.ux-textspans")
-                if not lab or not val:
-                    continue
-                label = lab.inner_text().strip().rstrip(":").lower()
-                value = val.inner_text().strip()
-                key_map = {
-                    "year": "year",
-                    "manufacturer": "manufacturer",
-                    "model": "model",
-                    "engine size": "engine_size",
-                    "fuel type": "fuel_type",
-                    "body type": "body_type",
-                    "transmission": "transmission",
-                    "mileage": "mileage",
-                    "exterior colour": "exterior_colour",
-                    "interior colour": "interior_colour"
-                }
-                if label in key_map:
-                    specifics[key_map[label]] = value
+            try:
+                page.wait_for_selector(".ux-layout-section__item.ux-labels-values__item", timeout=10000)
+                spec_items = page.query_selector_all(".ux-layout-section__item.ux-labels-values__item")
 
-            # 2) <dl> lists fallback
-            for dl in page.query_selector_all("dl.ux-labels-values"):
-                lab = dl.query_selector("dt.ux-labels-values__labels span.ux-textspans")
-                val = dl.query_selector("dd.ux-labels-values__values span.ux-textspans")
-                if not lab or not val:
-                    continue
-                label = lab.inner_text().strip().rstrip(":").lower()
-                value = val.inner_text().strip()
-                key_map = {
-                    "year": "year",
-                    "manufacturer": "manufacturer",
-                    "model": "model",
-                    "engine size": "engine_size",
-                    "fuel type": "fuel_type",
-                    "body type": "body_type",
-                    "transmission": "transmission",
-                    "mileage": "mileage",
-                    "exterior colour": "exterior_colour",
-                    "interior colour": "interior_colour"
-                }
-                if label in key_map and specifics[key_map[label]] == "Unknown":
-                    specifics[key_map[label]] = value
+                for item in spec_items:
+                    label_el = item.query_selector(".ux-labels-values__labels")
+                    value_el = item.query_selector(".ux-labels-values__values")
+                    if label_el and value_el:
+                        label = label_el.inner_text().strip().replace(":", "")
+                        value = value_el.inner_text().strip()
+                        if label in fields_we_want:
+                            specifics[label.lower().replace(" ", "_")] = value
+            except:
+                pass  # Fail gracefully
 
-            # 3) <ul><li> legacy fallback
-            for li in page.query_selector_all("ul.ux-labels-values__content li"):
-                text = li.inner_text().strip().split(":", 1)
-                if len(text) != 2:
-                    continue
-                label, value = text[0].lower(), text[1].strip()
-                key_map = {
-                    "year": "year",
-                    "manufacturer": "manufacturer",
-                    "model": "model",
-                    "engine size": "engine_size",
-                    "fuel type": "fuel_type",
-                    "body type": "body_type",
-                    "transmission": "transmission",
-                    "mileage": "mileage",
-                    "exterior colour": "exterior_colour",
-                    "interior colour": "interior_colour"
-                }
-                if label in key_map and specifics[key_map[label]] == "Unknown":
-                    specifics[key_map[label]] = value
+            # Ensure all fields are present, even if fallback value
+            for key, fallback in fallback_fields.items():
+                if key not in specifics:
+                    specifics[key] = fallback
 
-            # Normalize mileage digits
-            if specifics["mileage"] != "Unknown":
-                m2 = re.search(r"([\d,]+)", specifics["mileage"])
-                specifics["mileage"] = m2.group(1).replace(",", "") if m2 else "Unknown"
+            # Confidence score: percent of fields populated
+            total_fields = len(fallback_fields)
+            known_fields = sum(1 for v in specifics.values() if v.lower() != "unknown")
+            confidence = round(known_fields / total_fields, 2)
 
             browser.close()
 
@@ -143,6 +91,9 @@ def scrape(request: ScrapeRequest):
                 "title": title,
                 "price": price,
                 "image": image,
+                "url": request.url,
+                "source": "ebay",
+                "confidence": confidence,
                 **specifics
             }
 
